@@ -74,88 +74,23 @@ def random_crop_and_pad_image_and_labels(image, label, crop_h, crop_w, ignore_la
     return img_crop, label_crop
 
 
-def get_data_from_dataset(data_dir, name, is_val=False, valid_image_store_path='/path/to/arbitrary/'):
-    '''
-    :param data_dir:
-    :param name:
-    :param is_val:
-    :param valid_image_store_path: when you use the val.py,you will use it.otherwise ignore it please.
-    :return:
-    '''
-    base_url = data_dir
-    images, masks, png_names = [], [], []
-    if name == 'VOC2012':
-        data_url = {
-            'Annotations': base_url + 'Annotations/',
-            'ImageSets': base_url + 'ImageSets/',
-            'JPEGImages': base_url + 'JPEGImages/',
-            'SegmentationClass': base_url + 'SegmentationClass/',
-            'SegmentationLabel': base_url + 'SegmentationLabel/',
-            'SegmentationObject': base_url + 'SegmentationObject/'
-        }
+def read_labeled_image_list(data_dir):
 
-        filepath = data_url['ImageSets']
-        filepath += 'Segmentation/val.txt' if is_val else 'Segmentation/train_dup.txt'
-        print("file path:" + filepath)
-        with open(filepath, mode='r') as f:
-            imgs_name = f.readlines()
-        for i in range(len(imgs_name)):
-            imgs_name[i] = imgs_name[i].strip('\n')
-        for name in imgs_name:
-            images.append(data_url['JPEGImages'] + name + '.jpg')
-            masks.append(data_url['SegmentationLabel'] + name + '.png')
-            png_names.append(valid_image_store_path + name + '.png')
-        return images, masks, png_names
-
-    elif name == 'sbd':
-        data_url = {
-            'anns': base_url + 'dataset/clsImg/',
-            'images': base_url + 'images/'
-        }
-
-        filepath = base_url + 'sbd.txt'
-
-        print("file path:" + filepath)
-        with open(filepath, mode='r') as f:
-            imgs_name = f.readlines()
-        for i in range(len(imgs_name)):
-            imgs_name[i] = imgs_name[i].strip()
-        for name in imgs_name:
-            images.append(data_url['images'] + name + '.jpg')
-            masks.append(data_url['anns'] + name + '.png')
-        return images, masks, []
+    filepath = data_dir+"train.txt"
+    images=[]
+    labels=[]
+    with open(filepath, mode='r') as f:
+        imgs_name = f.readlines()
+    for i in range(len(imgs_name)):
+        imgs_name[i] = imgs_name[i].strip('\n')
+    for name in imgs_name:
+        images.append(data_dir+'rgb\\'+name + '.jpeg')
+        labels.append(data_dir+'figure_ground\\'+name + '.jpeg')
+    print("file path:" + data_dir)
+    return  images, labels
 
 
-def read_labeled_image_list(data_dir, is_val=False, valid_image_store_path='/path/to/arbitrary/'):
-    """Reads txt file containing paths to images and ground truth masks.
-
-    Args:
-      data_dir: path to the directory with images and masks.
-      data_list: path to the file with lines of the form '/path/to/image /path/to/mask'.
-
-    Returns:
-      Two lists with all file names for images and masks, respectively.
-    """
-    assert type(data_dir) == list
-    images, masks = [], []
-    for base_url in data_dir:
-        ti, tm, tn = None, None, None
-        if 'VOC2012' in base_url:
-            ti, tm, tn = get_data_from_dataset(base_url, 'VOC2012', is_val, valid_image_store_path)
-            if is_val:
-                return ti, tm, tn
-        elif 'sbd' in base_url:
-            ti, tm, _ = get_data_from_dataset(base_url, 'sbd')
-        else:
-            print("no such path")
-            exit()
-        images.extend(ti)
-        masks.extend(tm)
-    return images, masks, None
-
-
-def read_images_from_disk(input_queue, input_size, random_scale, random_mirror, random_crop, ignore_label,
-                          img_mean):  # optional pre-processing arguments
+def read_images_from_disk(input_queue, input_size, random_scale, random_mirror, random_crop):  # optional pre-processing arguments
     """Read one image and its corresponding mask with optional pre-processing.
 
     Args:
@@ -176,12 +111,12 @@ def read_images_from_disk(input_queue, input_size, random_scale, random_mirror, 
     img_contents = tf.read_file(input_queue[0])
     label_contents = tf.read_file(input_queue[1])
     img = tf.image.decode_jpeg(img_contents, channels=3)
-    img_r, img_g, img_b = tf.split(axis=2, num_or_size_splits=3, value=img)
-    img = tf.cast(tf.concat(axis=2, values=[img_b, img_g, img_r]), dtype=tf.float32)
+  #  img_r, img_g, img_b = tf.split(axis=2, num_or_size_splits=3, value=img)
+  #  img = tf.cast(tf.concat(axis=2, values=[img_b, img_g, img_r]), dtype=tf.float32)
     # Extract mean.
-    img -= img_mean
+   # img -= img_mean
 
-    label = tf.image.decode_png(label_contents, channels=1)
+    label = tf.image.decode_jpeg(label_contents, channels=1)
 
     if input_size is not None:
         h, w = input_size
@@ -196,7 +131,7 @@ def read_images_from_disk(input_queue, input_size, random_scale, random_mirror, 
 
         # Randomly crops the images and labels.
         if random_crop:
-            img, label = random_crop_and_pad_image_and_labels(img, label, h, w, ignore_label)
+            img, label = random_crop_and_pad_image_and_labels(img, label, h, w)
 
     return img, label
 
@@ -207,7 +142,7 @@ class ImageReader(object):
     '''
 
     def __init__(self, data_dir, input_size,
-                 random_scale, random_mirror, random_crop, ignore_label, is_val, img_mean,
+                 random_scale, random_mirror, random_crop,
                  coord):
         '''Initialise an ImageReader.
 
@@ -217,20 +152,19 @@ class ImageReader(object):
           input_size: a tuple with (height, width) values, to which all the images will be resized.
           random_scale: whether to randomly scale the images prior to random crop.
           random_mirror: whether to randomly mirror the images prior to random crop.
-          ignore_label: index of label to ignore during the training.
-          img_mean: vector of mean colour values.
+          ignore_label: index of label to ignore during the training
           coord: TensorFlow queue coordinator.
         '''
         self.data_dir = data_dir
         self.input_size = input_size
         self.coord = coord
-        self.image_list, self.label_list, _ = read_labeled_image_list(self.data_dir, is_val)
+        self.image_list,self.label_list = read_labeled_image_list(self.data_dir)
         self.images = tf.convert_to_tensor(self.image_list, dtype=tf.string)
         self.labels = tf.convert_to_tensor(self.label_list, dtype=tf.string)
         self.queue = tf.train.slice_input_producer([self.images, self.labels],
                                                    shuffle=input_size is not None)  # not shuffling if it is val
         self.image, self.label = read_images_from_disk(self.queue, self.input_size, random_scale, random_mirror,
-                                                       random_crop, ignore_label, img_mean)
+                                                       random_crop)
 
     def dequeue(self, batch_size):
         '''Pack images and labels into a batch.
@@ -243,3 +177,13 @@ class ImageReader(object):
 
         image_batch, label_batch = tf.train.batch([self.image, self.label], batch_size, dynamic_pad=True)
         return image_batch, label_batch
+
+
+#labels = tf.convert_to_tensor(
+       # "J:\\artical\\Deep Models for Optmising Multivariate Performance Measures\\weizmann_horse_db\\figure_ground\\horse001.jpg",
+       # dtype=tf.string)
+#img_contents = tf.read_file(labels)
+#img = tf.image.decode_jpeg(img_contents, channels=1)
+#sess=tf.Session()
+#label_=sess.run(img)
+#label__=sess.run(img_contents)
