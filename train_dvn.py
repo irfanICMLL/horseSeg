@@ -19,7 +19,7 @@ def train(args):
     print("lambda:", args.lambd)
     print("learning_rate:", args.learning_rate)
     print("is_val:", args.is_val)
-    print("---------------------------------")
+    print("--------------------------------")
 
     ## load data
     with tf.name_scope("create_inputs"):

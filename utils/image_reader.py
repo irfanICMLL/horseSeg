@@ -84,8 +84,8 @@ def read_labeled_image_list(data_dir):
     for i in range(len(imgs_name)):
         imgs_name[i] = imgs_name[i].strip('\n')
     for name in imgs_name:
-        images.append(data_dir+'rgb\\'+name + '.jpeg')
-        labels.append(data_dir+'figure_ground\\'+name + '.jpeg')
+        images.append(data_dir+'rgb\\'+name + '.jpg')
+        labels.append(data_dir+'figure_ground\\'+name + '.jpg')
     print("file path:" + data_dir)
     return  images, labels
 
@@ -119,8 +119,10 @@ def read_images_from_disk(input_queue, input_size, random_scale, random_mirror, 
     label = tf.image.decode_jpeg(label_contents, channels=1)
 
     if input_size is not None:
-        h, w = input_size
 
+        img=tf.image.resize_images(img,input_size)
+        label = tf.image.resize_nearest_neighbor(tf.expand_dims(label, 0),input_size)
+        label = tf.squeeze(label, squeeze_dims=[0])
         # Randomly scale the images and labels.
         if random_scale:
             img, label = image_scaling(img, label)
