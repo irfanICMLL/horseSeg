@@ -34,26 +34,29 @@ random_seed = 1234
 tf.set_random_seed(random_seed)
 coord = tf.train.Coordinator()
 eps = 1e-8
-img_size = [256, 256]
-random_scale = True
+img_size = [45, 45]
+crop_size=[33,33]
+random_scale = False
 random_mirror = True
-random_crop = False
+random_crop = True
 batch_size = 8
 learning_rate = 0.00001
-momentum = 0.9
 power = 0.9
 num_steps = 300000
 restore_from = './weights/dvn/20171101/'
 g_weight_from = ''
 d_weight_from = ''
 data_dir = '/data/rui.wu/irfan/gan_seg/dvn/data/'
+is_train=True
 with tf.name_scope("create_inputs"):
     reader = ImageReader(
         data_dir,
         img_size,
+        crop_size,
         random_scale,
         random_mirror,
         random_crop,
+        is_train,
         coord)
     image_batch, label_batch = reader.dequeue(batch_size)
     print("Data is ready!")
