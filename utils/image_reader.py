@@ -13,7 +13,7 @@ def image_scaling(img, label):
       label: Segmentation mask to scale.
     """
 
-    scale = tf.random_uniform([1], minval=0.5, maxval=1.5, dtype=tf.float32, seed=None)
+    scale = tf.random_uniform([1], minval=1, maxval=2, dtype=tf.float32, seed=None)
     h_new = tf.to_int32(tf.multiply(tf.to_float(tf.shape(img)[0]), scale))
     w_new = tf.to_int32(tf.multiply(tf.to_float(tf.shape(img)[1]), scale))
     new_shape = tf.squeeze(tf.stack([h_new, w_new]), squeeze_dims=[1])
@@ -41,7 +41,7 @@ def image_mirroring(img, label):
     return img, label
 
 
-def random_crop_and_pad_image_and_labels(image, label, crop_h, crop_w, ignore_label=255):
+def random_crop_and_pad_image_and_labels(image, label, crop_h, crop_w):
     """
     Randomly crop and pads the input images.
 
@@ -54,7 +54,6 @@ def random_crop_and_pad_image_and_labels(image, label, crop_h, crop_w, ignore_la
     """
 
     label = tf.cast(label, dtype=tf.float32)
-    label = label - ignore_label  # Needs to be subtracted and later added due to 0 padding.
     combined = tf.concat(axis=2, values=[image, label])
     image_shape = tf.shape(image)
     combined_pad = tf.image.pad_to_bounding_box(combined, 0, 0, tf.maximum(crop_h, image_shape[0]),
@@ -65,7 +64,7 @@ def random_crop_and_pad_image_and_labels(image, label, crop_h, crop_w, ignore_la
     combined_crop = tf.random_crop(combined_pad, [crop_h, crop_w, 4])
     img_crop = combined_crop[:, :, :last_image_dim]
     label_crop = combined_crop[:, :, last_image_dim:]
-    label_crop = label_crop + ignore_label
+    #label_crop = label_crop + ignore_label
     label_crop = tf.cast(label_crop, dtype=tf.uint8)
 
     # Set static shape so that tensorflow knows shape at compile time.
@@ -84,13 +83,13 @@ def read_labeled_image_list(data_dir):
     for i in range(len(imgs_name)):
         imgs_name[i] = imgs_name[i].strip('\n')
     for name in imgs_name:
-        images.append(data_dir+'rgb\\'+name + '.jpg')
-        labels.append(data_dir+'figure_ground\\'+name + '.jpg')
+        images.append(data_dir+'rgb/'+name + '.jpg')
+        labels.append(data_dir+'figure_ground/'+name + '.jpg')
     print("file path:" + data_dir)
     return  images, labels
 
 
-def read_images_from_disk(input_queue, input_size, random_scale, random_mirror, random_crop):  # optional pre-processing arguments
+def read_images_from_disk(input_queue, input_size,crop_size, random_scale, random_mirror, random_crop):  # optional pre-processing arguments
     """Read one image and its corresponding mask with optional pre-processing.
 
     Args:
@@ -115,11 +114,12 @@ def read_images_from_disk(input_queue, input_size, random_scale, random_mirror, 
   #  img = tf.cast(tf.concat(axis=2, values=[img_b, img_g, img_r]), dtype=tf.float32)
     # Extract mean.
    # img -= img_mean
-
+    img = img/255
     label = tf.image.decode_jpeg(label_contents, channels=1)
-
+    label = label/255
     if input_size is not None:
-
+        h, w = input_size
+        ch,cw=crop_size
         img=tf.image.resize_images(img,input_size)
         label = tf.image.resize_nearest_neighbor(tf.expand_dims(label, 0),input_size)
         label = tf.squeeze(label, squeeze_dims=[0])
@@ -133,7 +133,7 @@ def read_images_from_disk(input_queue, input_size, random_scale, random_mirror, 
 
         # Randomly crops the images and labels.
         if random_crop:
-            img, label = random_crop_and_pad_image_and_labels(img, label, h, w)
+            img, label = random_crop_and_pad_image_and_labels(img, label, ch, cw)
 
     return img, label
 
@@ -143,9 +143,9 @@ class ImageReader(object):
        masks from the disk, and enqueues them into a TensorFlow queue.
     '''
 
-    def __init__(self, data_dir, input_size,
+    def __init__(self, data_dir, input_size,crop_size,
                  random_scale, random_mirror, random_crop,
-                 coord):
+                 train,coord):
         '''Initialise an ImageReader.
 
         Args:
@@ -157,15 +157,17 @@ class ImageReader(object):
           ignore_label: index of label to ignore during the training
           coord: TensorFlow queue coordinator.
         '''
+        self.train=train
         self.data_dir = data_dir
         self.input_size = input_size
         self.coord = coord
+        self.crop_size=crop_size
         self.image_list,self.label_list = read_labeled_image_list(self.data_dir)
         self.images = tf.convert_to_tensor(self.image_list, dtype=tf.string)
         self.labels = tf.convert_to_tensor(self.label_list, dtype=tf.string)
         self.queue = tf.train.slice_input_producer([self.images, self.labels],
-                                                   shuffle=input_size is not None)  # not shuffling if it is val
-        self.image, self.label = read_images_from_disk(self.queue, self.input_size, random_scale, random_mirror,
+                                                   shuffle=self.train)  # not shuffling if it is val
+        self.image, self.label = read_images_from_disk(self.queue, self.input_size,self.crop_size, random_scale, random_mirror,
                                                        random_crop)
 
     def dequeue(self, batch_size):
