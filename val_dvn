@@ -1,0 +1,96 @@
+# coding: utf-8
+import os
+import argparse
+import os
+import time
+import tensorflow as tf
+import numpy as np
+from skimage import io
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['CUDA_VISIBLE_DEVICES'] = '4'
+time.sleep(2)
+
+from models.generator import ValueNet, FCN
+from utils.data_handle import save_weight, load_weight
+from utils.image_reader import ImageReader
+
+random_seed = 1234
+tf.set_random_seed(random_seed)
+coord = tf.train.Coordinator()
+eps = 1e-8
+img_size = [33,33]
+crop_size = [33, 33]
+random_scale = False
+random_mirror = False
+random_crop = False
+batch_size = 1
+learning_rate = 0.00001
+power = 0.9
+num_steps = 328
+restore_from = './weights/dvn/20171101/'
+g_weight_from = './weights/dvn/20171101/'
+d_weight_from = ''
+data_dir = '/data/rui.wu/irfan/gan_seg/dvn/data/'
+is_train=False
+with tf.name_scope("create_inputs"):
+    reader = ImageReader(
+        data_dir,
+        img_size,
+        crop_size,
+        random_scale,
+        random_mirror,
+        random_crop,
+        is_train,
+        coord)
+    image_batch, label_batch = reader.dequeue(batch_size)
+    print("Data is ready!")
+g_net = FCN({'data': image_batch})
+gen_score_map = g_net.get_output()
+gen_sample = tf.nn.softmax(gen_score_map)
+g_restore_var = [v for v in tf.global_variables() if 'valuenet' not in v.name]
+
+label_list = tf.reshape(label_batch, [-1, ])
+label_list = tf.cast(label_list, tf.uint8)
+label = tf.one_hot(label_list, 2)
+logist = tf.reshape(gen_score_map, [-1, 2])
+
+pre_batch = tf.expand_dims(tf.cast(tf.argmax(gen_sample, axis=-1), tf.uint8), axis=-1)
+predict_label = tf.argmax(logist, axis=1)
+iou_var, iou_op = tf.metrics.mean_iou(label_list, predict_label, 2)
+accuracy_var, acc_op = tf.metrics.accuracy(label_list, predict_label)
+
+config = tf.ConfigProto()
+config.gpu_options.allow_growth = True
+sess = tf.Session(config=config)
+
+global_init = tf.global_variables_initializer()
+local_init = tf.local_variables_initializer()
+sess.run(global_init)
+sess.run(local_init)
+
+saver_all = tf.train.Saver(var_list=tf.global_variables(), max_to_keep=20)
+trained_step = 0
+
+if os.path.exists(g_weight_from + 'checkpoint'):
+    saver_g = tf.train.Saver(var_list=g_restore_var, max_to_keep=20)
+    load_weight(g_weight_from, saver_g, sess)  # the weight is the completely g model
+
+threads = tf.train.start_queue_runners(sess, coord)
+iterstep = tf.placeholder(dtype=tf.float32, shape=[], name='iteration_step')
+
+for step in range(num_steps):
+    now_step = int(trained_step) + step if trained_step is not None else step
+    feed_dict = {iterstep: step}
+
+    image_, label_, picture, _, _, acc, iou = sess.run([image_batch,label_batch,pre_batch, acc_op, iou_op, accuracy_var, iou_var], feed_dict)
+    if step % 50 == 0 or step == num_steps - 1:
+        print('step={} val_iou={}  val_acc={}'.format(now_step, iou, acc))
+    picture*=255
+    label_*=255
+    image_*=255
+    label_ = np.tile(label_, [1, 1, 3])
+    picture = np.tile(picture, [1, 1, 3])
+    io.imsave('./val_33/predict_%d.jpg' % (step), (picture[0,:,:,:]).astype(np.uint8))
+    io.imsave('./val_33/image_%d.jpg' % (step), (image_[0,:,:,:]).astype(np.uint8))
+    io.imsave('./val_33/label_%d.jpg' % (step), (label_[0,:,:,:]).astype(np.uint8))
