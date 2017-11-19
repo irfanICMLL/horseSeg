@@ -8,7 +8,7 @@ import numpy as np
 from skimage import io
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ['CUDA_VISIBLE_DEVICES'] = '4'
+os.environ['CUDA_VISIBLE_DEVICES'] = '6'
 time.sleep(2)
 
 from models.generator import ValueNet, FCN
@@ -34,8 +34,8 @@ random_seed = 1234
 tf.set_random_seed(random_seed)
 coord = tf.train.Coordinator()
 eps = 1e-8
-img_size = [45, 45]
-crop_size=[33,33]
+img_size = [135, 135]
+crop_size=[128,128]
 random_scale = False
 random_mirror = True
 random_crop = True
@@ -43,7 +43,7 @@ batch_size = 8
 learning_rate = 0.00001
 power = 0.9
 num_steps = 300000
-restore_from = './weights/dvn/20171101/'
+restore_from = './weights/dvn/20171119/'
 g_weight_from = ''
 d_weight_from = ''
 data_dir = '/data/rui.wu/irfan/gan_seg/dvn/data/'
@@ -69,8 +69,8 @@ image_batch = tf.cast(image_batch, tf.float32)
 # label_batch_b = tf.where(tf.greater(label_batch, 0.5), a, b)
 
 real_iou = tf.placeholder(tf.float32, [batch_size, 1])
-train_seg = tf.placeholder(tf.float32, [batch_size, 33, 33, 1])
-train_image = tf.placeholder(tf.float32, [batch_size, 33, 33, 3])
+train_seg = tf.placeholder(tf.float32, [batch_size, 128, 128, 1])
+train_image = tf.placeholder(tf.float32, [batch_size, 128, 128, 3])
 train_seg_new = tf.cast(train_seg, tf.uint8)
 train_seg_new = tf.squeeze(train_seg_new, squeeze_dims=[3])
 train_seg_new = tf.one_hot(train_seg_new, 2)
@@ -112,7 +112,6 @@ iterstep = tf.placeholder(dtype=tf.float32, shape=[], name='iteration_step')
 base_lr = tf.constant(learning_rate, dtype=tf.float32, shape=[])
 lr = tf.scalar_mul(base_lr,
                    tf.pow((1 - iterstep / num_steps), power))  # learning rate reduce with the time
-
 train_g_op = tf.train.AdamOptimizer(learning_rate=lr).minimize(g_loss, var_list=g_trainable_var)
 train_d_op = tf.train.AdamOptimizer(learning_rate=lr*10).minimize(dvn_loss, var_list=d_trainable_var)
 
@@ -138,50 +137,56 @@ elif os.path.exists(d_weight_from + 'checkpoint'):
 
 threads = tf.train.start_queue_runners(sess, coord)
 # begin training
+
 for step in range(num_steps):
     now_step = int(trained_step) + step if trained_step is not None else step
     feed_dict = {iterstep: step}
-    if step % 500 == 0 or step == num_steps - 1:
-        gen_sample_, real_sample_, image_, _, mce_loss_,_,_,acc, iou = sess.run(
-            [gen_sample, real_sample, image_batch, train_g_op, mce_loss, acc_op, iou_op,accuracy_var,iou_var], feed_dict)
-        print('step={} train_iou={} g_loss={} train_acc={}'.format(now_step, iou,
+    #train g
+    for g_step in range(1):
+        if step % 50 == 0 or step == num_steps - 1:
+            _, mce_loss_,_,_,acc, iou = sess.run(
+                [train_g_op, mce_loss, acc_op, iou_op,accuracy_var,iou_var], feed_dict)
+            print('step={} train_iou={} g_loss={} train_acc={}'.format(now_step, iou,
                                                                    mce_loss_,
                                                                    acc))
-    else:
-        gen_sample_, real_sample_, image_, _, _, _ = sess.run(
-            [gen_sample, real_sample, image_batch, train_g_op, acc_op, iou_op], feed_dict)
-    iou_gen = np.zeros([batch_size, 1])
-    predict = gen_sample_[:, :, :, 1]
-    predict[predict > 0.5] = 1
-    predict[predict <= 0.5] = 0
-    predict = np.expand_dims(predict, 3)
+        else:
+             _, _, _ = sess.run(
+                    [train_g_op, acc_op, iou_op], feed_dict)
+    #train_d
+    for d_step in range(10):
+        feed_dict = {iterstep: step}
+        # gen sample
+        gen_sample_, real_sample_, image_ = sess.run([gen_sample, real_sample, image_batch], feed_dict)
+        predict = gen_sample_[:, :, :, 1]
+        predict[predict > 0.5] = 1
+        predict[predict <= 0.5] = 0
+        predict = np.expand_dims(predict, 3)
 
-    iou_now = np.zeros([batch_size, 1])
-    for i in range(batch_size):
-        iou_now[i, 0] = gt_value(predict[i, :, :, :], real_sample_[i, :, :, :])
+        iou_now = np.zeros([batch_size, 1])
+        for i in range(batch_size):
+            iou_now[i, 0] = gt_value(predict[i, :, :, :], real_sample_[i, :, :, :])
 
-    for d_step in range(5):
-        if np.random.rand() >= 0.7:
+        if np.random.rand() >= 0.5:
             iou_gen = np.ones([batch_size, 1])
             train_seg_ = real_sample_
         else:
-            if np.random.rand() >= 0.5:
-                init_labels = np.zeros(real_sample_.shape)
-                gt_indices = np.random.rand(batch_size, 33, 33, 1) > 0.5
-                init_labels[gt_indices] = real_sample_[gt_indices]
-                train_seg_ = init_labels
-                for i in range(batch_size):
-                    iou_gen[i, 0] = gt_value(train_seg_, real_sample_)
-            else:
-                train_seg_ = predict
-                iou_gen = iou_now
+           # if np.random.rand() >= 0.5:
+            #    init_labels = np.zeros(real_sample_.shape)
+             #   gt_indices = np.random.rand(batch_size, 128, 128, 1) > 0.5
+             #   init_labels[gt_indices] = real_sample_[gt_indices]
+              #  train_seg_ = init_labels
+              #  for i in range(batch_size):
+                  #  iou_gen[i, 0] = gt_value(train_seg_, real_sample_)
+          #  else:
+            train_seg_ = predict
+            iou_gen = iou_now
 
         feed_dict_dvn = {iterstep: now_step, real_iou: iou_gen, train_seg: train_seg_, train_image: image_}
 
         if step > 0 and d_step==4 and step % 1000 == 0:
             save_weight(restore_from, saver_all, sess, now_step)
 
-        if step % 500 == 0 and d_step==4 or step == num_steps - 1:
+        if step % 50 == 0 and d_step==4 or step == num_steps - 1:
             pre_iou_, dvn_loss_, _ = sess.run([pre_iou, dvn_loss, train_d_op], feed_dict_dvn)
             print('step={} d_loss={} pre_iou={} real_iou{}'.format(now_step,
                                                                    dvn_loss_,
